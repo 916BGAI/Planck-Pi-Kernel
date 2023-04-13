@@ -34,18 +34,6 @@
 			gpios = <&pio 4 4 GPIO_ACTIVE_LOW>; /* PE4 */
 		};
 
-		/*
-		 *	点亮LED
-		 *	echo 1 > /sys/class/leds/led\:user/brightness
-		 *	熄灭LED
-		 *	echo 0 > /sys/class/leds/led\:user/brightness
-		 *	控制LED闪烁
-		 *	# ls /sys/class/leds/led:user
-		 *	brightness      max_brightness  subsystem       uevent
-		 *	device          power           trigger
-		 *	echo heartbeat > /sys/class/leds/led:user/trigger
-		 */
-
 	};
 };
 
@@ -83,7 +71,7 @@
 
 &usbphy {
 	status = "okay";
-	usb0_id_det-gpios = <&pio 4 2 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; /* PE2 */
+	usb0_id_det-gpios = <&pio 4 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>; /* PE5 */
 };
 
 /*
