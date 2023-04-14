@@ -22,6 +22,7 @@
 
 	leds {
 		compatible = "gpio-leds";
+		status = "okay";
 
 		sys_led {
 			label = "led:sys";
@@ -33,7 +34,13 @@
 			label = "led:user";
 			gpios = <&pio 4 4 GPIO_ACTIVE_LOW>; /* PE4 */
 		};
+	};
 
+	key {
+		compatible = "planck-pi,key";
+		status = "okay";
+
+		key-gpios  = <&pio 4 2 GPIO_ACTIVE_HIGH>; /* PE2 */
 	};
 };
 

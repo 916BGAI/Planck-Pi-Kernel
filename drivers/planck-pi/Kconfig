@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Planck Pi Drivers configuration
+#
+
+menuconfig PLANCK_PI_DRIVERS
+	bool "Planck Pi Drivers"
+	default y
+	help
+	  Say Y here to choose drivers for Planck Pi.
+
+if PLANCK_PI_DRIVERS
+
+config KEY_PLANCK_PI
+	tristate "Enable Key support for Planck Pi"
+	depends on INPUT
+	default y if INPUT
+	help
+	  This driver supports Planck Pi.
+
+endif
