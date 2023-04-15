@@ -37,15 +37,15 @@
 	};
 
 	gpio-keys {
-			compatible = "gpio-keys";
-			autorepeat;
-			status = "okay";
+		compatible = "gpio-keys";
+		autorepeat;
+		status = "okay";
 
-			key {
-				label = "GPIO KEY Enter";
-				linux,code = <KEY_ENTER>;
-				gpios = <&pio 4 2 GPIO_ACTIVE_LOW>; /* PE2 */
-			};
+		key {
+			label = "GPIO KEY Enter";
+			linux,code = <KEY_ENTER>;
+			gpios = <&pio 4 2 GPIO_ACTIVE_LOW>; /* PE2 */
+		};
 	};
 };
 
