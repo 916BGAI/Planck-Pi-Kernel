@@ -8,7 +8,6 @@
  */
 
 #include <linux/err.h>
-#include <linux/firmware/imx/types.h>
 #include <linux/firmware/imx/ipc.h>
 #include <linux/firmware/imx/sci.h>
 #include <linux/interrupt.h>
@@ -203,6 +202,7 @@ static int imx_scu_ipc_write(struct imx_sc_ipc *sc_ipc, void *msg)
  */
 int imx_scu_call_rpc(struct imx_sc_ipc *sc_ipc, void *msg, bool have_resp)
 {
+	uint8_t saved_svc, saved_func;
 	struct imx_sc_rpc_msg *hdr;
 	int ret;
 
@@ -212,8 +212,11 @@ int imx_scu_call_rpc(struct imx_sc_ipc *sc_ipc, void *msg, bool have_resp)
 	mutex_lock(&sc_ipc->lock);
 	reinit_completion(&sc_ipc->done);
 
-	if (have_resp)
+	if (have_resp) {
 		sc_ipc->msg = msg;
+		saved_svc = ((struct imx_sc_rpc_msg *)msg)->svc;
+		saved_func = ((struct imx_sc_rpc_msg *)msg)->func;
+	}
 	sc_ipc->count = 0;
 	ret = imx_scu_ipc_write(sc_ipc, msg);
 	if (ret < 0) {
@@ -232,6 +235,16 @@ int imx_scu_call_rpc(struct imx_sc_ipc *sc_ipc, void *msg, bool have_resp)
 		/* response status is stored in hdr->func field */
 		hdr = msg;
 		ret = hdr->func;
+		/*
+		 * Some special SCU firmware APIs do NOT have return value
+		 * in hdr->func, but they do have response data, those special
+		 * APIs are defined as void function in SCU firmware, so they
+		 * should be treated as return success always.
+		 */
+		if ((saved_svc == IMX_SC_RPC_SVC_MISC) &&
+			(saved_func == IMX_SC_MISC_FUNC_UNIQUE_ID ||
+			 saved_func == IMX_SC_MISC_FUNC_GET_BUTTON_STATUS))
+			ret = 0;
 	}
 
 out:
@@ -297,9 +310,8 @@ static int imx_scu_probe(struct platform_device *pdev)
 		sc_chan->ch = mbox_request_channel_byname(cl, chan_name);
 		if (IS_ERR(sc_chan->ch)) {
 			ret = PTR_ERR(sc_chan->ch);
-			if (ret != -EPROBE_DEFER)
-				dev_err(dev, "Failed to request mbox chan %s ret %d\n",
-					chan_name, ret);
+			dev_err_probe(dev, ret, "Failed to request mbox chan %s\n",
+				      chan_name);
 			kfree(chan_name);
 			return ret;
 		}
@@ -314,6 +326,10 @@ static int imx_scu_probe(struct platform_device *pdev)
 	init_completion(&sc_ipc->done);
 
 	imx_sc_ipc_handle = sc_ipc;
+
+	ret = imx_scu_soc_init(dev);
+	if (ret)
+		dev_warn(dev, "failed to initialize SoC info: %d\n", ret);
 
 	ret = imx_scu_enable_general_irq_channel(dev);
 	if (ret)

@@ -35,19 +35,27 @@ struct sprd_div {
 	struct sprd_clk_common	common;
 };
 
-#define SPRD_DIV_CLK(_struct, _name, _parent, _reg,			\
-			_shift, _width, _flags)				\
+#define SPRD_DIV_CLK_HW_INIT_FN(_struct, _name, _parent, _reg,		\
+				_shift, _width, _flags, _fn)		\
 	struct sprd_div _struct = {					\
 		.div	= _SPRD_DIV_CLK(_shift, _width),		\
 		.common	= {						\
 			.regmap		= NULL,				\
 			.reg		= _reg,				\
-			.hw.init	= CLK_HW_INIT(_name,		\
-						      _parent,		\
-						      &sprd_div_ops,	\
-						      _flags),		\
+			.hw.init	= _fn(_name, _parent,		\
+					      &sprd_div_ops, _flags),	\
 		}							\
 	}
+
+#define SPRD_DIV_CLK(_struct, _name, _parent, _reg,			\
+		     _shift, _width, _flags)				\
+	SPRD_DIV_CLK_HW_INIT_FN(_struct, _name, _parent, _reg,		\
+				_shift, _width, _flags, CLK_HW_INIT)
+
+#define SPRD_DIV_CLK_HW(_struct, _name, _parent, _reg,			\
+			_shift, _width, _flags)				\
+	SPRD_DIV_CLK_HW_INIT_FN(_struct, _name, _parent, _reg,		\
+				_shift, _width, _flags, CLK_HW_INIT_HW)
 
 static inline struct sprd_div *hw_to_sprd_div(const struct clk_hw *hw)
 {
@@ -55,11 +63,6 @@ static inline struct sprd_div *hw_to_sprd_div(const struct clk_hw *hw)
 
 	return container_of(common, struct sprd_div, common);
 }
-
-long sprd_div_helper_round_rate(struct sprd_clk_common *common,
-				const struct sprd_div_internal *div,
-				unsigned long rate,
-				unsigned long *parent_rate);
 
 unsigned long sprd_div_helper_recalc_rate(struct sprd_clk_common *common,
 					  const struct sprd_div_internal *div,

@@ -73,13 +73,14 @@ nouveau_debugfs_pstate_get(struct seq_file *m, void *data)
 {
 	struct drm_device *drm = m->private;
 	struct nouveau_debugfs *debugfs = nouveau_debugfs(drm);
-	struct nvif_object *ctrl = &debugfs->ctrl;
+	struct nvif_object *ctrl;
 	struct nvif_control_pstate_info_v0 info = {};
 	int ret, i;
 
 	if (!debugfs)
 		return -ENODEV;
 
+	ctrl = &debugfs->ctrl;
 	ret = nvif_mthd(ctrl, NVIF_CONTROL_PSTATE_INFO, &info, sizeof(info));
 	if (ret)
 		return ret;
@@ -119,19 +120,19 @@ nouveau_debugfs_pstate_get(struct seq_file *m, void *data)
 
 		if (state >= 0) {
 			if (info.ustate_ac == state)
-				seq_printf(m, " AC");
+				seq_puts(m, " AC");
 			if (info.ustate_dc == state)
-				seq_printf(m, " DC");
+				seq_puts(m, " DC");
 			if (info.pstate == state)
-				seq_printf(m, " *");
+				seq_puts(m, " *");
 		} else {
 			if (info.ustate_ac < -1)
-				seq_printf(m, " AC");
+				seq_puts(m, " AC");
 			if (info.ustate_dc < -1)
-				seq_printf(m, " DC");
+				seq_puts(m, " DC");
 		}
 
-		seq_printf(m, "\n");
+		seq_putc(m, '\n');
 	}
 
 	return 0;
@@ -144,7 +145,6 @@ nouveau_debugfs_pstate_set(struct file *file, const char __user *ubuf,
 	struct seq_file *m = file->private_data;
 	struct drm_device *drm = m->private;
 	struct nouveau_debugfs *debugfs = nouveau_debugfs(drm);
-	struct nvif_object *ctrl = &debugfs->ctrl;
 	struct nvif_control_pstate_user_v0 args = { .pwrsrc = -EINVAL };
 	char buf[32] = {}, *tmp, *cur = buf;
 	long value, ret;
@@ -188,7 +188,8 @@ nouveau_debugfs_pstate_set(struct file *file, const char __user *ubuf,
 		return ret;
 	}
 
-	ret = nvif_mthd(ctrl, NVIF_CONTROL_PSTATE_USER, &args, sizeof(args));
+	ret = nvif_mthd(&debugfs->ctrl, NVIF_CONTROL_PSTATE_USER,
+			&args, sizeof(args));
 	pm_runtime_put_autosuspend(drm->dev);
 	if (ret < 0)
 		return ret;
@@ -207,6 +208,7 @@ static const struct file_operations nouveau_pstate_fops = {
 	.open = nouveau_debugfs_pstate_open,
 	.read = seq_read,
 	.write = nouveau_debugfs_pstate_set,
+	.release = single_release,
 };
 
 static struct drm_info_list nouveau_debugfs_list[] = {
@@ -222,64 +224,52 @@ static const struct nouveau_debugfs_files {
 	{"pstate", &nouveau_pstate_fops},
 };
 
-int
+void
 nouveau_drm_debugfs_init(struct drm_minor *minor)
 {
 	struct nouveau_drm *drm = nouveau_drm(minor->dev);
 	struct dentry *dentry;
-	int i, ret;
+	int i;
 
 	for (i = 0; i < ARRAY_SIZE(nouveau_debugfs_files); i++) {
-		dentry = debugfs_create_file(nouveau_debugfs_files[i].name,
-					     S_IRUGO | S_IWUSR,
-					     minor->debugfs_root, minor->dev,
-					     nouveau_debugfs_files[i].fops);
-		if (!dentry)
-			return -ENOMEM;
+		debugfs_create_file(nouveau_debugfs_files[i].name,
+				    S_IRUGO | S_IWUSR,
+				    minor->debugfs_root, minor->dev,
+				    nouveau_debugfs_files[i].fops);
 	}
 
-	ret = drm_debugfs_create_files(nouveau_debugfs_list,
-				       NOUVEAU_DEBUGFS_ENTRIES,
-				       minor->debugfs_root, minor);
-	if (ret)
-		return ret;
+	drm_debugfs_create_files(nouveau_debugfs_list,
+				 NOUVEAU_DEBUGFS_ENTRIES,
+				 minor->debugfs_root, minor);
 
 	/* Set the size of the vbios since we know it, and it's confusing to
 	 * userspace if it wants to seek() but the file has a length of 0
 	 */
 	dentry = debugfs_lookup("vbios.rom", minor->debugfs_root);
 	if (!dentry)
-		return 0;
+		return;
 
 	d_inode(dentry)->i_size = drm->vbios.length;
 	dput(dentry);
-
-	return 0;
 }
 
 int
 nouveau_debugfs_init(struct nouveau_drm *drm)
 {
-	int ret;
-
 	drm->debugfs = kzalloc(sizeof(*drm->debugfs), GFP_KERNEL);
 	if (!drm->debugfs)
 		return -ENOMEM;
 
-	ret = nvif_object_init(&drm->client.device.object, 0,
-			       NVIF_CLASS_CONTROL, NULL, 0,
-			       &drm->debugfs->ctrl);
-	if (ret)
-		return ret;
-
-	return 0;
+	return nvif_object_ctor(&drm->client.device.object, "debugfsCtrl", 0,
+				NVIF_CLASS_CONTROL, NULL, 0,
+				&drm->debugfs->ctrl);
 }
 
 void
 nouveau_debugfs_fini(struct nouveau_drm *drm)
 {
 	if (drm->debugfs && drm->debugfs->ctrl.priv)
-		nvif_object_fini(&drm->debugfs->ctrl);
+		nvif_object_dtor(&drm->debugfs->ctrl);
 
 	kfree(drm->debugfs);
 	drm->debugfs = NULL;

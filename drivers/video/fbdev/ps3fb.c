@@ -45,7 +45,7 @@
 #define GPU_CMD_BUF_SIZE			(2 * 1024 * 1024)
 #define GPU_FB_START				(64 * 1024)
 #define GPU_IOIF				(0x0d000000UL)
-#define GPU_ALIGN_UP(x)				_ALIGN_UP((x), 64)
+#define GPU_ALIGN_UP(x)				ALIGN((x), 64)
 #define GPU_MAX_LINE_LENGTH			(65536 - 64)
 
 #define GPU_INTR_STATUS_VSYNC_0			0	/* vsync on head A */
@@ -650,7 +650,7 @@ static int ps3fb_set_par(struct fb_info *info)
 	}
 
 	/* Clear XDR frame buffer memory */
-	memset((void __force *)info->screen_base, 0, info->fix.smem_len);
+	memset(info->screen_buffer, 0, info->fix.smem_len);
 
 	/* Clear DDR frame buffer memory */
 	lines = vmode->yres * par->num_frames;
@@ -935,7 +935,8 @@ static irqreturn_t ps3fb_vsync_interrupt(int irq, void *ptr)
 }
 
 
-static struct fb_ops ps3fb_ops = {
+static const struct fb_ops ps3fb_ops = {
+	.owner		= THIS_MODULE,
 	.fb_open	= ps3fb_open,
 	.fb_release	= ps3fb_release,
 	.fb_read        = fb_sys_read,
@@ -1016,7 +1017,7 @@ static int ps3fb_probe(struct ps3_system_bus_device *dev)
 	}
 #endif
 
-	max_ps3fb_size = _ALIGN_UP(GPU_IOIF, 256*1024*1024) - GPU_IOIF;
+	max_ps3fb_size = ALIGN(GPU_IOIF, 256*1024*1024) - GPU_IOIF;
 	if (ps3fb_videomemory.size > max_ps3fb_size) {
 		dev_info(&dev->core, "Limiting ps3fb mem size to %lu bytes\n",
 			 max_ps3fb_size);
@@ -1139,7 +1140,7 @@ static int ps3fb_probe(struct ps3_system_bus_device *dev)
 	 * memory
 	 */
 	fb_start = ps3fb_videomemory.address + GPU_FB_START;
-	info->screen_base = (char __force __iomem *)fb_start;
+	info->screen_buffer = fb_start;
 	info->fix.smem_start = __pa(fb_start);
 	info->fix.smem_len = ps3fb_videomemory.size - GPU_FB_START;
 
@@ -1208,7 +1209,7 @@ err:
 	return retval;
 }
 
-static int ps3fb_shutdown(struct ps3_system_bus_device *dev)
+static void ps3fb_shutdown(struct ps3_system_bus_device *dev)
 {
 	struct fb_info *info = ps3_system_bus_get_drvdata(dev);
 	u64 xdr_lpar = ps3_mm_phys_to_lpar(__pa(ps3fb_videomemory.address));
@@ -1241,8 +1242,6 @@ static int ps3fb_shutdown(struct ps3_system_bus_device *dev)
 	lv1_gpu_memory_free(ps3fb.memory_handle);
 	ps3_close_hv_device(dev);
 	dev_dbg(&dev->core, " <- %s:%d\n", __func__, __LINE__);
-
-	return 0;
 }
 
 static struct ps3_system_bus_driver ps3fb_driver = {

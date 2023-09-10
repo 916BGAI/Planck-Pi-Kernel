@@ -115,7 +115,8 @@ static int emac_napi_rtx(struct napi_struct *napi, int budget)
 }
 
 /* Transmit the packet */
-static int emac_start_xmit(struct sk_buff *skb, struct net_device *netdev)
+static netdev_tx_t emac_start_xmit(struct sk_buff *skb,
+				   struct net_device *netdev)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
 
@@ -213,9 +214,9 @@ static int emac_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
 
-	netif_info(adpt, hw, adpt->netdev,
-		   "changing MTU from %d to %d\n", netdev->mtu,
-		   new_mtu);
+	netif_dbg(adpt, hw, adpt->netdev,
+		  "changing MTU from %d to %d\n", netdev->mtu,
+		  new_mtu);
 	netdev->mtu = new_mtu;
 
 	if (netif_running(netdev))
@@ -282,27 +283,16 @@ static int emac_close(struct net_device *netdev)
 }
 
 /* Respond to a TX hang */
-static void emac_tx_timeout(struct net_device *netdev)
+static void emac_tx_timeout(struct net_device *netdev, unsigned int txqueue)
 {
 	struct emac_adapter *adpt = netdev_priv(netdev);
 
 	schedule_work(&adpt->work_thread);
 }
 
-/* IOCTL support for the interface */
-static int emac_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
-{
-	if (!netif_running(netdev))
-		return -EINVAL;
-
-	if (!netdev->phydev)
-		return -ENODEV;
-
-	return phy_mii_ioctl(netdev->phydev, ifr, cmd);
-}
-
 /**
  * emac_update_hw_stats - read the EMAC stat registers
+ * @adpt: pointer to adapter struct
  *
  * Reads the stats registers and write the values to adpt->stats.
  *
@@ -387,7 +377,7 @@ static const struct net_device_ops emac_netdev_ops = {
 	.ndo_start_xmit		= emac_start_xmit,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_change_mtu		= emac_change_mtu,
-	.ndo_do_ioctl		= emac_ioctl,
+	.ndo_eth_ioctl		= phy_do_ioctl_running,
 	.ndo_tx_timeout		= emac_tx_timeout,
 	.ndo_get_stats64	= emac_get_stats64,
 	.ndo_set_features       = emac_set_features,
@@ -555,13 +545,10 @@ static int emac_probe_resources(struct platform_device *pdev,
 				struct emac_adapter *adpt)
 {
 	struct net_device *netdev = adpt->netdev;
-	char maddr[ETH_ALEN];
 	int ret = 0;
 
 	/* get mac address */
-	if (device_get_mac_address(&pdev->dev, maddr, ETH_ALEN))
-		ether_addr_copy(netdev->dev_addr, maddr);
-	else
+	if (device_get_ethdev_address(&pdev->dev, netdev))
 		eth_hw_addr_random(netdev);
 
 	/* Core 0 interrupt */
@@ -697,8 +684,7 @@ static int emac_probe(struct platform_device *pdev)
 	/* Initialize queues */
 	emac_mac_rx_tx_ring_init_all(pdev, adpt);
 
-	netif_napi_add(netdev, &adpt->rx_q.napi, emac_napi_rtx,
-		       NAPI_POLL_WEIGHT);
+	netif_napi_add(netdev, &adpt->rx_q.napi, emac_napi_rtx);
 
 	ret = register_netdev(netdev);
 	if (ret) {
@@ -738,18 +724,25 @@ static int emac_remove(struct platform_device *pdev)
 	struct net_device *netdev = dev_get_drvdata(&pdev->dev);
 	struct emac_adapter *adpt = netdev_priv(netdev);
 
+	netif_carrier_off(netdev);
+	netif_tx_disable(netdev);
+
 	unregister_netdev(netdev);
 	netif_napi_del(&adpt->rx_q.napi);
+
+	free_irq(adpt->irq.irq, &adpt->irq);
+	cancel_work_sync(&adpt->work_thread);
 
 	emac_clks_teardown(adpt);
 
 	put_device(&adpt->phydev->mdio.dev);
 	mdiobus_unregister(adpt->mii_bus);
-	free_netdev(netdev);
 
 	if (adpt->phy.digital)
 		iounmap(adpt->phy.digital);
 	iounmap(adpt->phy.base);
+
+	free_netdev(netdev);
 
 	return 0;
 }

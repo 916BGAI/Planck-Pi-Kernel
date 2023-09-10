@@ -16,7 +16,7 @@
  * OHCI is the main "non-Intel/VIA" standard for USB 1.1 host controller
  * interfaces (though some non-x86 Intel chips use it).  It supports
  * smarter hardware than UHCI.  A download link for the spec available
- * through the http://www.usb.org website.
+ * through the https://www.usb.org website.
  *
  * This file is licenced under the GPL.
  */
@@ -102,7 +102,7 @@ static void io_watchdog_func(struct timer_list *t);
 
 
 /* Some boards misreport power switching/overcurrent */
-static bool distrust_firmware = true;
+static bool distrust_firmware;
 module_param (distrust_firmware, bool, 0);
 MODULE_PARM_DESC (distrust_firmware,
 	"true to distrust firmware power/overcurrent setup");
@@ -171,7 +171,7 @@ static int ohci_urb_enqueue (
 
 			/* 1 TD for setup, 1 for ACK, plus ... */
 			size = 2;
-			/* FALLTHROUGH */
+			fallthrough;
 		// case PIPE_INTERRUPT:
 		// case PIPE_BULK:
 		default:
@@ -181,8 +181,7 @@ static int ohci_urb_enqueue (
 				size++;
 			else if ((urb->transfer_flags & URB_ZERO_PACKET) != 0
 				&& (urb->transfer_buffer_length
-					% usb_maxpacket (urb->dev, pipe,
-						usb_pipeout (pipe))) == 0)
+					% usb_maxpacket(urb->dev, pipe)) == 0)
 				size++;
 			break;
 		case PIPE_ISOCHRONOUS: /* number of packets from URB */
@@ -191,8 +190,7 @@ static int ohci_urb_enqueue (
 	}
 
 	/* allocate the private part of the URB */
-	urb_priv = kzalloc (sizeof (urb_priv_t) + size * sizeof (struct td *),
-			mem_flags);
+	urb_priv = kzalloc(struct_size(urb_priv, td, size), mem_flags);
 	if (!urb_priv)
 		return -ENOMEM;
 	INIT_LIST_HEAD (&urb_priv->pending);
@@ -385,7 +383,7 @@ sanitize:
 			ed_free (ohci, ed);
 			break;
 		}
-		/* fall through */
+		fallthrough;
 	default:
 		/* caller was supposed to have unlinked any requests;
 		 * that's not our job.  can't recover; must leak ed.
@@ -1055,7 +1053,7 @@ int ohci_restart(struct ohci_hcd *ohci)
 			ed->ed_next = ohci->ed_rm_list;
 			ed->ed_prev = NULL;
 			ohci->ed_rm_list = ed;
-			/* FALLTHROUGH */
+			fallthrough;
 		case ED_UNLINK:
 			break;
 		default:
@@ -1266,11 +1264,6 @@ MODULE_LICENSE ("GPL");
 #define SM501_OHCI_DRIVER	ohci_hcd_sm501_driver
 #endif
 
-#ifdef CONFIG_MFD_TC6393XB
-#include "ohci-tmio.c"
-#define TMIO_OHCI_DRIVER	ohci_hcd_tmio_driver
-#endif
-
 static int __init ohci_hcd_mod_init(void)
 {
 	int retval = 0;
@@ -1278,7 +1271,6 @@ static int __init ohci_hcd_mod_init(void)
 	if (usb_disabled())
 		return -ENODEV;
 
-	printk(KERN_INFO "%s: " DRIVER_DESC "\n", hcd_name);
 	pr_debug ("%s: block sizes: ed %zd td %zd\n", hcd_name,
 		sizeof (struct ed), sizeof (struct td));
 	set_bit(USB_OHCI_LOADED, &usb_hcds_loaded);
@@ -1309,19 +1301,9 @@ static int __init ohci_hcd_mod_init(void)
 		goto error_sm501;
 #endif
 
-#ifdef TMIO_OHCI_DRIVER
-	retval = platform_driver_register(&TMIO_OHCI_DRIVER);
-	if (retval < 0)
-		goto error_tmio;
-#endif
-
 	return retval;
 
 	/* Error path */
-#ifdef TMIO_OHCI_DRIVER
-	platform_driver_unregister(&TMIO_OHCI_DRIVER);
- error_tmio:
-#endif
 #ifdef SM501_OHCI_DRIVER
 	platform_driver_unregister(&SM501_OHCI_DRIVER);
  error_sm501:
@@ -1348,9 +1330,6 @@ module_init(ohci_hcd_mod_init);
 
 static void __exit ohci_hcd_mod_exit(void)
 {
-#ifdef TMIO_OHCI_DRIVER
-	platform_driver_unregister(&TMIO_OHCI_DRIVER);
-#endif
 #ifdef SM501_OHCI_DRIVER
 	platform_driver_unregister(&SM501_OHCI_DRIVER);
 #endif

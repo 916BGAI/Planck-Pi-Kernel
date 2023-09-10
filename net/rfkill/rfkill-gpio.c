@@ -8,12 +8,12 @@
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/rfkill.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/slab.h>
 #include <linux/acpi.h>
 #include <linux/gpio/consumer.h>
-#include <linux/of_gpio.h>
 
 struct rfkill_gpio_data {
 	const char		*name;
@@ -72,22 +72,12 @@ static int rfkill_gpio_acpi_probe(struct device *dev,
 	return devm_acpi_dev_add_driver_gpios(dev, acpi_rfkill_default_gpios);
 }
 
-static int rfkill_gpio_dt_probe(struct device *dev,
-				struct rfkill_gpio_data *rfkill)
-{
-	struct device_node * np = dev->of_node;
-
-	rfkill->name = np->name;
-	of_property_read_string(np, "rfkill-name", &rfkill->name);
-	of_property_read_u32(np, "rfkill-type", &rfkill->type);
-
-	return 0;
-}
-
 static int rfkill_gpio_probe(struct platform_device *pdev)
 {
 	struct rfkill_gpio_data *rfkill;
 	struct gpio_desc *gpio;
+	const char *name_property;
+	const char *type_property;
 	const char *type_name;
 	int ret;
 
@@ -95,8 +85,15 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 	if (!rfkill)
 		return -ENOMEM;
 
-	device_property_read_string(&pdev->dev, "name", &rfkill->name);
-	device_property_read_string(&pdev->dev, "type", &type_name);
+	if (dev_of_node(&pdev->dev)) {
+		name_property = "label";
+		type_property = "radio-type";
+	} else {
+		name_property = "name";
+		type_property = "type";
+	}
+	device_property_read_string(&pdev->dev, name_property, &rfkill->name);
+	device_property_read_string(&pdev->dev, type_property, &type_name);
 
 	if (!rfkill->name)
 		rfkill->name = dev_name(&pdev->dev);
@@ -105,10 +102,6 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 
 	if (ACPI_HANDLE(&pdev->dev)) {
 		ret = rfkill_gpio_acpi_probe(&pdev->dev, rfkill);
-		if (ret)
-			return ret;
-	} else if (&pdev->dev.of_node) {
-		ret = rfkill_gpio_dt_probe(&pdev->dev, rfkill);
 		if (ret)
 			return ret;
 	}
@@ -174,10 +167,11 @@ static const struct acpi_device_id rfkill_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, rfkill_acpi_match);
 #endif
 
-static const struct of_device_id rfkill_of_match[] = {
+static const struct of_device_id rfkill_of_match[] __maybe_unused = {
 	{ .compatible = "rfkill-gpio", },
-	{},
+	{ },
 };
+MODULE_DEVICE_TABLE(of, rfkill_of_match);
 
 static struct platform_driver rfkill_gpio_driver = {
 	.probe = rfkill_gpio_probe,

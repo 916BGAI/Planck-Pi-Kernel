@@ -355,14 +355,19 @@ static int pp_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct pp_struct *pp = file->private_data;
 	struct parport *port;
 	void __user *argp = (void __user *)arg;
+	struct ieee1284_info *info;
+	unsigned char reg;
+	unsigned char mask;
+	int mode;
+	s32 time32[2];
+	s64 time64[2];
+	struct timespec64 ts;
+	int ret;
 
 	/* First handle the cases that don't take arguments. */
 	switch (cmd) {
 	case PPCLAIM:
 	    {
-		struct ieee1284_info *info;
-		int ret;
-
 		if (pp->flags & PP_CLAIMED) {
 			dev_dbg(&pp->pdev->dev, "you've already got it!\n");
 			return -EINVAL;
@@ -513,15 +518,6 @@ static int pp_do_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	port = pp->pdev->port;
 	switch (cmd) {
-		struct ieee1284_info *info;
-		unsigned char reg;
-		unsigned char mask;
-		int mode;
-		s32 time32[2];
-		s64 time64[2];
-		struct timespec64 ts;
-		int ret;
-
 	case PPRSTATUS:
 		reg = parport_read_status(port);
 		if (copy_to_user(argp, &reg, sizeof(reg)))
@@ -678,14 +674,6 @@ static long pp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
-#ifdef CONFIG_COMPAT
-static long pp_compat_ioctl(struct file *file, unsigned int cmd,
-			    unsigned long arg)
-{
-	return pp_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
-}
-#endif
-
 static int pp_open(struct inode *inode, struct file *file)
 {
 	unsigned int minor = iminor(inode);
@@ -785,7 +773,9 @@ static __poll_t pp_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
-static struct class *ppdev_class;
+static const struct class ppdev_class = {
+	.name = CHRDEV,
+};
 
 static const struct file_operations pp_fops = {
 	.owner		= THIS_MODULE,
@@ -794,9 +784,7 @@ static const struct file_operations pp_fops = {
 	.write		= pp_write,
 	.poll		= pp_poll,
 	.unlocked_ioctl	= pp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl   = pp_compat_ioctl,
-#endif
+	.compat_ioctl   = compat_ptr_ioctl,
 	.open		= pp_open,
 	.release	= pp_release,
 };
@@ -808,7 +796,7 @@ static void pp_attach(struct parport *port)
 	if (devices[port->number])
 		return;
 
-	ret = device_create(ppdev_class, port->dev,
+	ret = device_create(&ppdev_class, port->dev,
 			    MKDEV(PP_MAJOR, port->number), NULL,
 			    "parport%d", port->number);
 	if (IS_ERR(ret)) {
@@ -824,7 +812,7 @@ static void pp_detach(struct parport *port)
 	if (!devices[port->number])
 		return;
 
-	device_destroy(ppdev_class, MKDEV(PP_MAJOR, port->number));
+	device_destroy(&ppdev_class, MKDEV(PP_MAJOR, port->number));
 	devices[port->number] = NULL;
 }
 
@@ -855,11 +843,10 @@ static int __init ppdev_init(void)
 		pr_warn(CHRDEV ": unable to get major %d\n", PP_MAJOR);
 		return -EIO;
 	}
-	ppdev_class = class_create(THIS_MODULE, CHRDEV);
-	if (IS_ERR(ppdev_class)) {
-		err = PTR_ERR(ppdev_class);
+	err = class_register(&ppdev_class);
+	if (err)
 		goto out_chrdev;
-	}
+
 	err = parport_register_driver(&pp_driver);
 	if (err < 0) {
 		pr_warn(CHRDEV ": unable to register with parport\n");
@@ -870,7 +857,7 @@ static int __init ppdev_init(void)
 	goto out;
 
 out_class:
-	class_destroy(ppdev_class);
+	class_unregister(&ppdev_class);
 out_chrdev:
 	unregister_chrdev(PP_MAJOR, CHRDEV);
 out:
@@ -881,7 +868,7 @@ static void __exit ppdev_cleanup(void)
 {
 	/* Clean up all parport stuff */
 	parport_unregister_driver(&pp_driver);
-	class_destroy(ppdev_class);
+	class_unregister(&ppdev_class);
 	unregister_chrdev(PP_MAJOR, CHRDEV);
 }
 

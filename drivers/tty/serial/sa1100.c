@@ -7,10 +7,6 @@
  *  Copyright (C) 2000 Deep Blue Solutions Ltd.
  */
 
-#if defined(CONFIG_SERIAL_SA1100_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
-#define SUPPORT_SYSRQ
-#endif
-
 #include <linux/module.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
@@ -214,9 +210,7 @@ sa1100_rx_chars(struct sa1100_port *sport)
 			else if (status & UTSR1_TO_SM(UTSR1_FRE))
 				flg = TTY_FRAME;
 
-#ifdef SUPPORT_SYSRQ
 			sport->port.sysrq = 0;
-#endif
 		}
 
 		if (uart_handle_sysrq_char(&sport->port, ch))
@@ -229,21 +223,12 @@ sa1100_rx_chars(struct sa1100_port *sport)
 			 UTSR0_TO_SM(UART_GET_UTSR0(sport));
 	}
 
-	spin_unlock(&sport->port.lock);
 	tty_flip_buffer_push(&sport->port.state->port);
-	spin_lock(&sport->port.lock);
 }
 
 static void sa1100_tx_chars(struct sa1100_port *sport)
 {
-	struct circ_buf *xmit = &sport->port.state->xmit;
-
-	if (sport->port.x_char) {
-		UART_PUT_CHAR(sport, sport->port.x_char);
-		sport->port.icount.tx++;
-		sport->port.x_char = 0;
-		return;
-	}
+	u8 ch;
 
 	/*
 	 * Check the modem control lines before
@@ -251,28 +236,9 @@ static void sa1100_tx_chars(struct sa1100_port *sport)
 	 */
 	sa1100_mctrl_check(sport);
 
-	if (uart_circ_empty(xmit) || uart_tx_stopped(&sport->port)) {
-		sa1100_stop_tx(&sport->port);
-		return;
-	}
-
-	/*
-	 * Tried using FIFO (not checking TNF) for fifo fill:
-	 * still had the '4 bytes repeated' problem.
-	 */
-	while (UART_GET_UTSR1(sport) & UTSR1_TNF) {
-		UART_PUT_CHAR(sport, xmit->buf[xmit->tail]);
-		xmit->tail = (xmit->tail + 1) & (UART_XMIT_SIZE - 1);
-		sport->port.icount.tx++;
-		if (uart_circ_empty(xmit))
-			break;
-	}
-
-	if (uart_circ_chars_pending(xmit) < WAKEUP_CHARS)
-		uart_write_wakeup(&sport->port);
-
-	if (uart_circ_empty(xmit))
-		sa1100_stop_tx(&sport->port);
+	uart_port_tx(&sport->port, ch,
+			UART_GET_UTSR1(sport) & UTSR1_TNF,
+			UART_PUT_CHAR(sport, ch));
 }
 
 static irqreturn_t sa1100_int(int irq, void *dev_id)
@@ -417,7 +383,7 @@ static void sa1100_shutdown(struct uart_port *port)
 
 static void
 sa1100_set_termios(struct uart_port *port, struct ktermios *termios,
-		   struct ktermios *old)
+		   const struct ktermios *old)
 {
 	struct sa1100_port *sport =
 		container_of(port, struct sa1100_port, port);
@@ -454,6 +420,8 @@ sa1100_set_termios(struct uart_port *port, struct ktermios *termios,
 	baud = uart_get_baud_rate(port, termios, old, 0, port->uartclk/16); 
 	quot = uart_get_divisor(port, baud);
 
+	del_timer_sync(&sport->timer);
+
 	spin_lock_irqsave(&sport->port.lock, flags);
 
 	sport->port.read_status_mask &= UTSR0_TO_SM(UTSR0_TFS);
@@ -483,8 +451,6 @@ sa1100_set_termios(struct uart_port *port, struct ktermios *termios,
 			sport->port.ignore_status_mask |=
 				UTSR1_TO_SM(UTSR1_ROR);
 	}
-
-	del_timer_sync(&sport->timer);
 
 	/*
 	 * Update the per-port timeout.
@@ -703,7 +669,7 @@ void __init sa1100_register_uart(int idx, int port)
 
 
 #ifdef CONFIG_SERIAL_SA1100_CONSOLE
-static void sa1100_console_putchar(struct uart_port *port, int ch)
+static void sa1100_console_putchar(struct uart_port *port, unsigned char ch)
 {
 	struct sa1100_port *sport =
 		container_of(port, struct sa1100_port, port);
@@ -860,6 +826,7 @@ static int sa1100_serial_resume(struct platform_device *dev)
 static int sa1100_serial_add_one_port(struct sa1100_port *sport, struct platform_device *dev)
 {
 	sport->port.dev = &dev->dev;
+	sport->port.has_sysrq = IS_ENABLED(CONFIG_SERIAL_SA1100_CONSOLE);
 
 	// mctrl_gpio_init() requires that the GPIO driver supports interrupts,
 	// but we need to support GPIO drivers for hardware that has no such
@@ -884,22 +851,20 @@ static int sa1100_serial_add_one_port(struct sa1100_port *sport, struct platform
 
 static int sa1100_serial_probe(struct platform_device *dev)
 {
-	struct resource *res = dev->resource;
+	struct resource *res;
 	int i;
 
-	for (i = 0; i < dev->num_resources; i++, res++)
-		if (res->flags & IORESOURCE_MEM)
-			break;
+	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -EINVAL;
 
-	if (i < dev->num_resources) {
-		for (i = 0; i < NR_PORTS; i++) {
-			if (sa1100_ports[i].port.mapbase != res->start)
-				continue;
-
-			sa1100_serial_add_one_port(&sa1100_ports[i], dev);
+	for (i = 0; i < NR_PORTS; i++)
+		if (sa1100_ports[i].port.mapbase == res->start)
 			break;
-		}
-	}
+	if (i == NR_PORTS)
+		return -ENODEV;
+
+	sa1100_serial_add_one_port(&sa1100_ports[i], dev);
 
 	return 0;
 }

@@ -7,7 +7,6 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
-#include <linux/gpio.h>
 #include <linux/leds.h>
 #include <linux/slab.h>
 #include <linux/platform_device.h>
@@ -350,9 +349,9 @@ static int lm355x_indicator_brightness_set(struct led_classdev *cdev,
 }
 
 /* indicator pattern only for lm3556*/
-static ssize_t lm3556_indicator_pattern_store(struct device *dev,
-					      struct device_attribute *attr,
-					      const char *buf, size_t size)
+static ssize_t pattern_store(struct device *dev,
+			     struct device_attribute *attr,
+			     const char *buf, size_t size)
 {
 	ssize_t ret;
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
@@ -382,7 +381,7 @@ out:
 	return ret;
 }
 
-static DEVICE_ATTR(pattern, S_IWUSR, NULL, lm3556_indicator_pattern_store);
+static DEVICE_ATTR_WO(pattern);
 
 static struct attribute *lm355x_indicator_attrs[] = {
 	&dev_attr_pattern.attr,
@@ -397,9 +396,9 @@ static const struct regmap_config lm355x_regmap = {
 };
 
 /* module initialize */
-static int lm355x_probe(struct i2c_client *client,
-				  const struct i2c_device_id *id)
+static int lm355x_probe(struct i2c_client *client)
 {
+	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	struct lm355x_platform_data *pdata = dev_get_platdata(&client->dev);
 	struct lm355x_chip_data *chip;
 
@@ -454,8 +453,7 @@ static int lm355x_probe(struct i2c_client *client,
 	chip->cdev_flash.max_brightness = 16;
 	chip->cdev_flash.brightness_set_blocking = lm355x_strobe_brightness_set;
 	chip->cdev_flash.default_trigger = "flash";
-	err = led_classdev_register((struct device *)
-				    &client->dev, &chip->cdev_flash);
+	err = led_classdev_register(&client->dev, &chip->cdev_flash);
 	if (err < 0)
 		goto err_out;
 	/* torch */
@@ -463,8 +461,7 @@ static int lm355x_probe(struct i2c_client *client,
 	chip->cdev_torch.max_brightness = 8;
 	chip->cdev_torch.brightness_set_blocking = lm355x_torch_brightness_set;
 	chip->cdev_torch.default_trigger = "torch";
-	err = led_classdev_register((struct device *)
-				    &client->dev, &chip->cdev_torch);
+	err = led_classdev_register(&client->dev, &chip->cdev_torch);
 	if (err < 0)
 		goto err_create_torch_file;
 	/* indicator */
@@ -478,8 +475,7 @@ static int lm355x_probe(struct i2c_client *client,
 	/* indicator pattern control only for LM3556 */
 	if (id->driver_data == CHIP_LM3556)
 		chip->cdev_indicator.groups = lm355x_indicator_groups;
-	err = led_classdev_register((struct device *)
-				    &client->dev, &chip->cdev_indicator);
+	err = led_classdev_register(&client->dev, &chip->cdev_indicator);
 	if (err < 0)
 		goto err_create_indicator_file;
 
@@ -495,7 +491,7 @@ err_out:
 	return err;
 }
 
-static int lm355x_remove(struct i2c_client *client)
+static void lm355x_remove(struct i2c_client *client)
 {
 	struct lm355x_chip_data *chip = i2c_get_clientdata(client);
 	struct lm355x_reg_data *preg = chip->regs;
@@ -505,8 +501,6 @@ static int lm355x_remove(struct i2c_client *client)
 	led_classdev_unregister(&chip->cdev_torch);
 	led_classdev_unregister(&chip->cdev_flash);
 	dev_info(&client->dev, "%s is removed\n", lm355x_name[chip->type]);
-
-	return 0;
 }
 
 static const struct i2c_device_id lm355x_id[] = {

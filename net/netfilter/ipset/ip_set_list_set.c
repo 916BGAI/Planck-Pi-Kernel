@@ -149,7 +149,7 @@ __list_set_del_rcu(struct rcu_head * rcu)
 	kfree(e);
 }
 
-static inline void
+static void
 list_set_del(struct ip_set *set, struct set_elem *e)
 {
 	struct list_set *map = set->data;
@@ -160,7 +160,7 @@ list_set_del(struct ip_set *set, struct set_elem *e)
 	call_rcu(&e->rcu, __list_set_del_rcu);
 }
 
-static inline void
+static void
 list_set_replace(struct ip_set *set, struct set_elem *e, struct set_elem *old)
 {
 	struct list_set *map = set->data;
@@ -427,7 +427,7 @@ list_set_destroy(struct ip_set *set)
 	struct set_elem *e, *n;
 
 	if (SET_WITH_TIMEOUT(set))
-		del_timer_sync(&map->gc);
+		timer_shutdown_sync(&map->gc);
 
 	list_for_each_entry_safe(e, n, &map->members, list) {
 		list_del(&e->list);

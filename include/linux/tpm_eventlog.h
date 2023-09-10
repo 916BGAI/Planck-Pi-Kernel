@@ -28,7 +28,7 @@ struct tcpa_event {
 	u32 event_type;
 	u8 pcr_value[20];	/* SHA1 */
 	u32 event_size;
-	u8 event_data[0];
+	u8 event_data[];
 };
 
 enum tcpa_event_types {
@@ -55,7 +55,7 @@ enum tcpa_event_types {
 struct tcpa_pc_event {
 	u32 event_id;
 	u32 event_size;
-	u8 event_data[0];
+	u8 event_data[];
 };
 
 enum tcpa_pc_event_ids {
@@ -99,12 +99,12 @@ struct tcg_pcr_event {
 	u32 event_type;
 	u8 digest[20];
 	u32 event_size;
-	u8 event[0];
+	u8 event[];
 } __packed;
 
 struct tcg_event_field {
 	u32 event_size;
-	u8 event[0];
+	u8 event[];
 } __packed;
 
 struct tcg_pcr_event2_head {
@@ -157,7 +157,7 @@ struct tcg_algorithm_info {
  * Return: size of the event on success, 0 on failure
  */
 
-static inline int __calc_tpm2_event_size(struct tcg_pcr_event2_head *event,
+static __always_inline int __calc_tpm2_event_size(struct tcg_pcr_event2_head *event,
 					 struct tcg_pcr_event *event_header,
 					 bool do_mapping)
 {
@@ -198,8 +198,8 @@ static inline int __calc_tpm2_event_size(struct tcg_pcr_event2_head *event,
 	 * The loop below will unmap these fields if the log is larger than
 	 * one page, so save them here for reference:
 	 */
-	count = READ_ONCE(event->count);
-	event_type = READ_ONCE(event->event_type);
+	count = event->count;
+	event_type = event->event_type;
 
 	/* Verify that it's the log header */
 	if (event_header->pcr_idx != 0 ||

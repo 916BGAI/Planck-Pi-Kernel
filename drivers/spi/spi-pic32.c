@@ -361,6 +361,7 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 	struct dma_slave_config cfg;
 	int ret;
 
+	memset(&cfg, 0, sizeof(cfg));
 	cfg.device_fc = true;
 	cfg.src_addr = pic32s->dma_base + buf_offset;
 	cfg.dst_addr = pic32s->dma_base + buf_offset;
@@ -369,7 +370,6 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 	cfg.src_addr_width = dma_width;
 	cfg.dst_addr_width = dma_width;
 	/* tx channel */
-	cfg.slave_id = pic32s->tx_irq;
 	cfg.direction = DMA_MEM_TO_DEV;
 	ret = dmaengine_slave_config(master->dma_tx, &cfg);
 	if (ret) {
@@ -377,7 +377,6 @@ static int pic32_spi_dma_config(struct pic32_spi *pic32s, u32 dma_width)
 		return ret;
 	}
 	/* rx channel */
-	cfg.slave_id = pic32s->rx_irq;
 	cfg.direction = DMA_DEV_TO_MEM;
 	ret = dmaengine_slave_config(master->dma_rx, &cfg);
 	if (ret)
@@ -592,39 +591,42 @@ static int pic32_spi_setup(struct spi_device *spi)
 	 * unreliable/erroneous SPI transactions.
 	 * To avoid that we will always handle /CS by toggling GPIO.
 	 */
-	if (!gpio_is_valid(spi->cs_gpio))
+	if (!spi_get_csgpiod(spi, 0))
 		return -EINVAL;
-
-	gpio_direction_output(spi->cs_gpio, !(spi->mode & SPI_CS_HIGH));
 
 	return 0;
 }
 
 static void pic32_spi_cleanup(struct spi_device *spi)
 {
-	/* de-activate cs-gpio */
-	gpio_direction_output(spi->cs_gpio, !(spi->mode & SPI_CS_HIGH));
+	/* de-activate cs-gpio, gpiolib will handle inversion */
+	gpiod_direction_output(spi_get_csgpiod(spi, 0), 0);
 }
 
-static void pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
+static int pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
 {
 	struct spi_master *master = pic32s->master;
-	dma_cap_mask_t mask;
+	int ret = 0;
 
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_SLAVE, mask);
+	master->dma_rx = dma_request_chan(dev, "spi-rx");
+	if (IS_ERR(master->dma_rx)) {
+		if (PTR_ERR(master->dma_rx) == -EPROBE_DEFER)
+			ret = -EPROBE_DEFER;
+		else
+			dev_warn(dev, "RX channel not found.\n");
 
-	master->dma_rx = dma_request_slave_channel_compat(mask, NULL, NULL,
-							  dev, "spi-rx");
-	if (!master->dma_rx) {
-		dev_warn(dev, "RX channel not found.\n");
+		master->dma_rx = NULL;
 		goto out_err;
 	}
 
-	master->dma_tx = dma_request_slave_channel_compat(mask, NULL, NULL,
-							  dev, "spi-tx");
-	if (!master->dma_tx) {
-		dev_warn(dev, "TX channel not found.\n");
+	master->dma_tx = dma_request_chan(dev, "spi-tx");
+	if (IS_ERR(master->dma_tx)) {
+		if (PTR_ERR(master->dma_tx) == -EPROBE_DEFER)
+			ret = -EPROBE_DEFER;
+		else
+			dev_warn(dev, "TX channel not found.\n");
+
+		master->dma_tx = NULL;
 		goto out_err;
 	}
 
@@ -634,14 +636,20 @@ static void pic32_spi_dma_prep(struct pic32_spi *pic32s, struct device *dev)
 	/* DMA chnls allocated and prepared */
 	set_bit(PIC32F_DMA_PREP, &pic32s->flags);
 
-	return;
+	return 0;
 
 out_err:
-	if (master->dma_rx)
+	if (master->dma_rx) {
 		dma_release_channel(master->dma_rx);
+		master->dma_rx = NULL;
+	}
 
-	if (master->dma_tx)
+	if (master->dma_tx) {
 		dma_release_channel(master->dma_tx);
+		master->dma_tx = NULL;
+	}
+
+	return ret;
 }
 
 static void pic32_spi_dma_unprep(struct pic32_spi *pic32s)
@@ -702,8 +710,7 @@ static int pic32_spi_hw_probe(struct platform_device *pdev,
 	struct resource *mem;
 	int ret;
 
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	pic32s->regs = devm_ioremap_resource(&pdev->dev, mem);
+	pic32s->regs = devm_platform_get_and_ioremap_resource(pdev, 0, &mem);
 	if (IS_ERR(pic32s->regs))
 		return PTR_ERR(pic32s->regs);
 
@@ -774,9 +781,13 @@ static int pic32_spi_probe(struct platform_device *pdev)
 	master->unprepare_message	= pic32_spi_unprepare_message;
 	master->prepare_transfer_hardware	= pic32_spi_prepare_hardware;
 	master->unprepare_transfer_hardware	= pic32_spi_unprepare_hardware;
+	master->use_gpio_descriptors = true;
 
 	/* optional DMA support */
-	pic32_spi_dma_prep(pic32s, &pdev->dev);
+	ret = pic32_spi_dma_prep(pic32s, &pdev->dev);
+	if (ret)
+		goto err_bailout;
+
 	if (test_bit(PIC32F_DMA_PREP, &pic32s->flags))
 		master->can_dma	= pic32_spi_can_dma;
 
@@ -825,13 +836,14 @@ static int pic32_spi_probe(struct platform_device *pdev)
 	return 0;
 
 err_bailout:
+	pic32_spi_dma_unprep(pic32s);
 	clk_disable_unprepare(pic32s->clk);
 err_master:
 	spi_master_put(master);
 	return ret;
 }
 
-static int pic32_spi_remove(struct platform_device *pdev)
+static void pic32_spi_remove(struct platform_device *pdev)
 {
 	struct pic32_spi *pic32s;
 
@@ -839,8 +851,6 @@ static int pic32_spi_remove(struct platform_device *pdev)
 	pic32_spi_disable(pic32s);
 	clk_disable_unprepare(pic32s->clk);
 	pic32_spi_dma_unprep(pic32s);
-
-	return 0;
 }
 
 static const struct of_device_id pic32_spi_of_match[] = {
@@ -855,7 +865,7 @@ static struct platform_driver pic32_spi_driver = {
 		.of_match_table = of_match_ptr(pic32_spi_of_match),
 	},
 	.probe = pic32_spi_probe,
-	.remove = pic32_spi_remove,
+	.remove_new = pic32_spi_remove,
 };
 
 module_platform_driver(pic32_spi_driver);
